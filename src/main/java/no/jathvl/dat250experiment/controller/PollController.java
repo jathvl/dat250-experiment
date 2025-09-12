@@ -12,6 +12,7 @@ import java.util.Collection;
 import java.util.Optional;
 
 @RestController
+@CrossOrigin
 public class PollController {
     private final PollManager pollManager;
 

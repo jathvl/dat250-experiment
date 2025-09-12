@@ -75,14 +75,7 @@ public class PollManager {
     public Optional<Poll> getPoll(Integer id) {
         synchronized (users) {
             // Horribly inefficient
-            return users.values()
-                    .stream()
-                    .map(u -> u.polls
-                            .stream()
-                            .filter(p -> p.id == id)
-                            .findFirst())
-                    .findFirst()
-                    .orElse(null);
+            return getPolls().stream().filter(p -> p.id == id).findFirst();
         }
     }
 
