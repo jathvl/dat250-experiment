@@ -1,14 +1,15 @@
 package no.jathvl.dat250experiment.controller;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import no.jathvl.dat250experiment.dto.CreatePollRequest;
 import no.jathvl.dat250experiment.model.Poll;
 import no.jathvl.dat250experiment.repository.PollManager;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
-import java.util.Collection;
 import java.util.Optional;
 
 @RestController
@@ -35,9 +36,18 @@ public class PollController {
         return pollManager.getPoll(id);
     }
 
-    @GetMapping("/poll/all")
-    public Collection<Poll> getAllPolls() {
-        return pollManager.getPolls();
+    @GetMapping(path = "/poll/all", produces = MediaType.APPLICATION_JSON_VALUE)
+    public String getAllPolls() {
+        var cache = pollManager.getCachedAllPolls();
+        if (cache.isPresent()) {
+            return cache.get();
+        }
+
+        try {
+            return pollManager.getMapper().writeValueAsString(pollManager.getPolls());
+        } catch (JsonProcessingException e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, e.getMessage());
+        }
     }
 
     @DeleteMapping("/poll/{id}")

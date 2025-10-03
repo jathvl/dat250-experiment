@@ -1,5 +1,10 @@
 package no.jathvl.dat250experiment.repository;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import io.valkey.UnifiedJedis;
 import no.jathvl.dat250experiment.model.Poll;
 import no.jathvl.dat250experiment.model.User;
 import no.jathvl.dat250experiment.model.Vote;
@@ -18,6 +23,42 @@ public class PollManager {
     private int maxPollId = 0;
     private int maxVoteId = 0;
     private int maxVoteOptionId = 0;
+
+    private final UnifiedJedis jedis = new UnifiedJedis("redis://localhost:6379");
+    private final String cacheKey = "all-polls-cache";
+
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    public PollManager() {
+        mapper.configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
+        mapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
+        mapper.registerModule(new JavaTimeModule());
+    }
+
+    public ObjectMapper getMapper() {
+        return mapper;
+    }
+
+    private synchronized void clearCache() {
+        this.jedis.del(cacheKey);
+    }
+
+    private synchronized void setCache(Collection<Poll> polls) {
+        try {
+            jedis.set(cacheKey, mapper.writeValueAsString(polls));
+        } catch (JsonProcessingException e) {
+            clearCache();
+        }
+    }
+
+    public synchronized Optional<String> getCachedAllPolls() {
+        var cache = jedis.get(cacheKey);
+        if (cache != null) {
+            return Optional.of(cache);
+        }
+
+        return Optional.empty();
+    }
 
     public User createUser(String username, String email) {
         synchronized (users) {
@@ -59,17 +100,21 @@ public class PollManager {
             }
 
             user.polls.add(p);
+            clearCache();
             return Optional.of(p);
         }
     }
 
     public Collection<Poll> getPolls() {
-        return users.values()
+        var polls = users.values()
                 .stream()
                 .flatMap(u -> u.polls.stream())
                 .distinct()
                 .sorted(Comparator.comparingInt(p -> p.id))
                 .toList();
+
+        setCache(polls);
+        return polls;
     }
 
     public Optional<Poll> getPoll(Integer id) {
@@ -88,6 +133,8 @@ public class PollManager {
             }
             poll.options.clear();
             poll.creator.polls.remove(poll);
+
+            clearCache();
         }
     }
 
@@ -131,6 +178,8 @@ public class PollManager {
 
             user.votes.add(vote);
             option.votes.add(vote);
+
+            clearCache();
 
             return true;
         }
