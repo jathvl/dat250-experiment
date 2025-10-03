@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import io.valkey.JedisPubSub;
 import io.valkey.UnifiedJedis;
 import no.jathvl.dat250experiment.model.Poll;
 import no.jathvl.dat250experiment.model.User;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Repository;
 import java.time.Instant;
 import java.time.temporal.TemporalAmount;
 import java.util.*;
+import java.util.concurrent.ConcurrentSkipListSet;
 
 @Repository
 public class PollManager {
@@ -26,13 +28,19 @@ public class PollManager {
 
     private final UnifiedJedis jedis = new UnifiedJedis("redis://localhost:6379");
     private final String cacheKey = "all-polls-cache";
-
     private final ObjectMapper mapper = new ObjectMapper();
+
+    private final Set<String> subscribedTopics = new ConcurrentSkipListSet<>();
+    private Thread subscriberThread;
+    private final MySubscriber subscriber = new MySubscriber();
 
     public PollManager() {
         mapper.configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
         mapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
         mapper.registerModule(new JavaTimeModule());
+
+        startSubscribing();
+        clearCache();
     }
 
     public ObjectMapper getMapper() {
@@ -58,6 +66,37 @@ public class PollManager {
         }
 
         return Optional.empty();
+    }
+
+    public void startSubscribing() {
+        subscriberThread = new Thread(() -> {
+            jedis.subscribe(subscriber, "notifications");
+        });
+        subscriberThread.setDaemon(true);
+        subscriberThread.start();
+    }
+
+    public void addTopic(String topic) {
+        subscribedTopics.add(topic);
+        subscriber.subscribe(topic);
+    }
+
+    public void removeTopic(String topic) {
+        subscribedTopics.remove(topic);
+        subscriber.unsubscribe(topic);
+    }
+
+    public void handleMessage(String channel, String message) {
+        int voId = Integer.parseInt(channel.split("voteoption-")[1]);
+        int uId = Integer.parseInt(message);
+        handleCastVote(uId, voId);
+    }
+
+    private class MySubscriber extends JedisPubSub {
+        @Override
+        public void onMessage(String channel, String message) {
+            handleMessage(channel, message);
+        }
     }
 
     public User createUser(String username, String email) {
@@ -96,7 +135,9 @@ public class PollManager {
             var voteOptions = new ArrayList<VoteOption>();
             var p = new Poll(++maxPollId, question, now, now.plus(duration), user, voteOptions);
             for (int i = 0; i < options.size(); i++) {
-                voteOptions.add(new VoteOption(++maxVoteOptionId, options.get(i), i, p));
+                var opt = new VoteOption(++maxVoteOptionId, options.get(i), i, p);
+                voteOptions.add(opt);
+                addTopic(String.format("voteoption-%d", opt.id));
             }
 
             user.polls.add(p);
@@ -130,6 +171,7 @@ public class PollManager {
                 for (Vote v : o.votes) {
                     v.user.votes.remove(v);
                 }
+                removeTopic(String.format("voteoption-%d", o.id));
             }
             poll.options.clear();
             poll.creator.polls.remove(poll);
@@ -138,7 +180,11 @@ public class PollManager {
         }
     }
 
-    public boolean castVote (int userId, int optionId) {
+    public void castVote(int userId, int optionId) {
+        jedis.publish(String.format("voteoption-%d", optionId), String.valueOf(userId));
+    }
+
+    private boolean handleCastVote(int userId, int optionId) {
         // TODO: resolve potential race conditions related to the VoteOption being used by reference
         synchronized (users) {
             if (!users.containsKey(userId)) {
