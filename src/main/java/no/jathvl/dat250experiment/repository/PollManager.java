@@ -10,6 +10,7 @@ import no.jathvl.dat250experiment.model.Poll;
 import no.jathvl.dat250experiment.model.User;
 import no.jathvl.dat250experiment.model.Vote;
 import no.jathvl.dat250experiment.model.VoteOption;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
@@ -26,7 +27,7 @@ public class PollManager {
     private int maxVoteId = 0;
     private int maxVoteOptionId = 0;
 
-    private final UnifiedJedis jedis = new UnifiedJedis("redis://localhost:6379");
+    private final UnifiedJedis jedis;
     private final String cacheKey = "all-polls-cache";
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -34,11 +35,12 @@ public class PollManager {
     private Thread subscriberThread;
     private final MySubscriber subscriber = new MySubscriber();
 
-    public PollManager() {
+    public PollManager(@Value("${jathvl.valkey_conn_str}") String ValkeyConnectionString) {
         mapper.configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
         mapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
         mapper.registerModule(new JavaTimeModule());
 
+        jedis = new UnifiedJedis(ValkeyConnectionString);
         startSubscribing();
         clearCache();
     }

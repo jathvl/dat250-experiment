@@ -1,0 +1,17 @@
+services:
+  poll_app:
+    image: ghcr.io/jathvl/dat250-experiment:main
+    container_name: poll-app
+    command: webserver
+    ports:
+      - 127.0.0.1:8080:8080
+    environment:
+      - "VALKEY_CONN_STR=redis://poll-app-valkey:6379"
+    depends_on:
+      - poll_app_valkey
+    restart: always
+
+  poll_app_valkey:
+    image: docker.io/valkey/valkey:8-alpine
+    container_name: poll-app-valkey
+    restart: always
